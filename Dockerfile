@@ -1,22 +1,20 @@
-# نستبدل alpine بـ slim عشان bcrypt وغيره يشتغلوا بدون مشاكل
-FROM node:20-slim
+FROM node:20-alpine
 
 WORKDIR /app
 
-# تثبيت Caddy + الأدوات اللازمة لبناء native modules (لو احتجنا)
-RUN apt-get update && apt-get install -y caddy python3 make g++ && rm -rf /var/lib/apt/lists/*
+# تثبيت Caddy
+RUN apk add --no-cache caddy
 
-# نسخ package.json وتثبيت الديبندنسيز
+# نسخ package.json وتثبيت الديبندنسيز (production فقط)
 COPY package*.json ./
 RUN npm install --only=production
-
 # نسخ باقي الكود
 COPY . .
 
-# البورتات
+# البورتات المطلوبة
 EXPOSE 80 443 3000
 
-# التشغيل
+# تشغيل Caddy + Node.js في الـ production
 CMD sh -c "\
   if [ \"$NODE_ENV\" = \"production\" ]; then \
     echo 'Production Mode → Caddy + HTTPS + SSL'; \
