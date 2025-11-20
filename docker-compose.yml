@@ -1,0 +1,24 @@
+version: '3.9'
+
+services:
+  app:
+    build: .
+    container_name: aljodia-prod
+    restart: always
+    ports:
+      - "3000:3000"   # للـ Development
+      - "80:80"       # للـ Production
+      - "443:443"     # للـ HTTPS
+    volumes:
+      - .:/app
+      - ./sounds:/app/sounds:ro
+      - caddy_data:/data        # لحفظ الشهادات SSL
+      - caddy_config:/config
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+    env_file:
+      - .env
+
+volumes:
+  caddy_data:
+  caddy_config:

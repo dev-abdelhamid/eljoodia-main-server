@@ -1,0 +1,30 @@
+# الدومين الرسمي – HTTPS تلقائي + شهادة SSL من Let's Encrypt
+aljodia.com, www.aljodia.com {
+    reverse_proxy localhost:3000
+
+    # Socket.io شغال 100%
+    handle_path /socket.io/* {
+        reverse_proxy localhost:3000
+    }
+
+    # ملفات الصوت
+    file_server /sounds/* {
+        root /app/sounds
+    }
+
+    # أمان عالي جدًا
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+
+    encode gzip zstd
+}
+
+# لو مفيش دومين (يعني local) → يشتغل عادي على :3000
+:3000 {
+    reverse_proxy localhost:3000
+}

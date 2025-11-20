@@ -38,14 +38,11 @@ const server = http.createServer(app);
 app.set('trust proxy', 1); // Enable trust proxy for X-Forwarded-For
 
 const allowedOrigins = [
-
-  process.env.CLIENT_URL ||  'http://localhost:5173',
-  'https://eljoodia.vercel.app',
-  'https://eljoodia-client.vercel.app',
- 
-  'https://eljoodia-server-production.up.railway.app',
-
-];
+  process.env.CLIENT_URL,
+  'https://aljodia.com',
+  'https://www.aljodia.com',
+  'http://localhost:5173'
+].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
