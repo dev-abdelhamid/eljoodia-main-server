@@ -1,3 +1,14 @@
 node_modules
 npm-debug.log
+# تجاهل ملفات البيئة
 .env
+.env.local
+.env.development
+.env.production
+
+
+backups/
+
+.DS_Store
+caddy_data/
+caddy_config/

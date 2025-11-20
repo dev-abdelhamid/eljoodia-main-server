@@ -7,12 +7,12 @@ aljodia.com, www.aljodia.com {
         reverse_proxy localhost:3000
     }
 
-    # ملفات الصوت
+    # ملفات الصوت (لو موجودة)
     file_server /sounds/* {
         root /app/sounds
     }
 
-    # أمان عالي جدًا
+    # هيدرز أمان قوية جدًا
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options nosniff
@@ -24,7 +24,7 @@ aljodia.com, www.aljodia.com {
     encode gzip zstd
 }
 
-# لو مفيش دومين (يعني local) → يشتغل عادي على :3000
-:3000 {
-    reverse_proxy localhost:3000
+# لو الطلب جاي من غير دومين (يعني IP أو localhost)
+:80, :443 {
+    redir https://{host}{uri}
 }
