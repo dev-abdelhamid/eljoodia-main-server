@@ -6,12 +6,13 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
     env_file:
       - .env
     volumes:
       - caddy_data:/data
       - caddy_config:/config
-
+      - /root/eljoodia-main-client/dist:/dist:ro
 volumes:
   caddy_data:
   caddy_config:

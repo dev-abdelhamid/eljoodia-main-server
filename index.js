@@ -6,14 +6,15 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const mongoose = require('mongoose');
-let compression;
 
+let compression;
 try {
   compression = require('compression');
 } catch (err) {
-  console.warn(`[${new Date().toISOString()}] Compression module not found. Skipping compression middleware.`);
+  console.warn(`[${new Date().toISOString()}] Compression module not found. Skipping compression.`);
 }
 
 const connectDB = require('./config/database');
@@ -35,29 +36,53 @@ const { setupNotifications } = require('./utils/notifications');
 
 const app = express();
 const server = http.createServer(app);
-app.set('trust proxy', 1); // Enable trust proxy for X-Forwarded-For
 
+// مهم جدًا للـ proxy (Caddy)
+app.set('trust proxy', 1);
+
+// قائمة المصادر المسموحة
 const allowedOrigins = [
-  process.env.CLIENT_URL,
   'https://aljodia.com',
   'https://www.aljodia.com',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
 ].filter(Boolean);
 
+// ✅ CORS middleware عالمي (يغطي كل الـ routes بما فيهم OPTIONS)
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.error(`[${new Date().toISOString()}] CORS error: Origin ${origin} not allowed`);
+      console.error(`[${new Date().toISOString()}] CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Socket-Id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Socket-Id', 'Cookie'],
 }));
 
+// باقي middlewares
+app.use(cookieParser());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", 'https://aljodia.com', 'wss://aljodia.com', 'https://www.aljodia.com', 'wss://www.aljodia.com'],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      mediaSrc: ["'self'", 'https://aljodia.com'],
+      fontSrc: ["'self'", 'https:', 'data:'],
+      frameAncestors: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+}));
+
+// Socket.io
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -65,48 +90,37 @@ const io = new Server(server, {
     credentials: true,
   },
   path: '/socket.io',
-  transports: ['websocket'],
-  reconnection: true,
-  reconnectionAttempts: 10,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
   pingInterval: 25000,
-  pingTimeout: 120000,
+  pingTimeout: 60000,
 });
 
-app.use(helmet.contentSecurityPolicy({
-  directives: {
-    defaultSrc: ["'self'"],
-    connectSrc: ["'self'", ...allowedOrigins.map((origin) => origin.replace(/^https?/, 'wss')), ...allowedOrigins],
-    scriptSrc: ["'self'", "'unsafe-inline'"],
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    mediaSrc: ["'self'",   'http://localhost:5173', '/sounds/notification.mp3'],
-  },
-}));
-
+// Static files
 app.use('/sounds', express.static('sounds', {
   setHeaders: (res) => {
-    res.set('Cache-Control', 'public, max-age=31536000');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.set('Access-Control-Allow-Origin', '*');
   },
 }));
 
+// Socket middleware & events (كما هو)
 io.use(async (socket, next) => {
-  const token = socket.handshake.auth.token || socket.handshake.headers['authorization'];
-  if (!token) {
-    console.error(`[${new Date().toISOString()}] No token provided for socket: ${socket.id}`);
-    return next(new Error('Authentication error: No token provided'));
-  }
   try {
-    const cleanedToken = token.startsWith('Bearer ') ? token.replace('Bearer ', '') : token;
-    const decoded = jwt.verify(cleanedToken, process.env.JWT_ACCESS_SECRET);
-    const User = require('./models/User');
-    const user = await User.findById(decoded.id)
-      .populate('branch', 'name _id')
-      .lean();
-    if (!user) {
-      console.error(`[${new Date().toISOString()}] User not found for socket: ${decoded.id}`);
-      return next(new Error('Authentication error: User not found'));
+    let token = socket.handshake.auth.token || 
+                socket.handshake.headers['authorization']?.replace('Bearer ', '') ||
+                socket.handshake.headers['cookie']?.match(/token=([^;]+)/)?.[1];
+
+    if (!token) {
+      return next(new Error('Authentication error: No token provided'));
     }
+
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    const User = require('./models/User');
+    const user = await User.findById(decoded.id).select('username role branch').populate('branch', 'name').lean();
+
+    if (!user) return next(new Error('Authentication error: User not found'));
+
     socket.user = {
       id: user._id.toString(),
       username: user.username,
@@ -115,61 +129,57 @@ io.use(async (socket, next) => {
       branchName: user.branch?.name || null,
       chefId: user.role === 'chef' ? user._id.toString() : null,
     };
-    console.log(`[${new Date().toISOString()}] Socket authenticated: ${socket.id}, User: ${socket.user.username}`);
+
+    console.log(`[${new Date().toISOString()}] Socket authenticated: ${socket.id} → ${socket.user.username}`);
     next();
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] Socket auth error: ${err.message}`);
-    return next(new Error(`Authentication error: ${err.message}`));
+    console.error(`[${new Date().toISOString()}] Socket auth failed:`, err.message);
+    next(new Error('Authentication error'));
   }
 });
 
 io.on('connection', (socket) => {
-  console.log(`[${new Date().toISOString()}] Connected to socket: ${socket.id}, User: ${socket.user.username}`);
+  console.log(`[${new Date().toISOString()}] Socket connected: ${socket.id} (${socket.user.username})`);
+
   socket.on('joinRoom', ({ userId, role, branchId, chefId }) => {
-    if (socket.user.id !== userId) {
-      console.error(`[${new Date().toISOString()}] Unauthorized room join attempt: ${socket.user.id} tried to join as ${userId}`);
-      return;
-    }
+    if (socket.user.id !== userId) return;
+
     const rooms = [`user-${userId}`];
     if (role === 'admin') rooms.push('admin');
-    if (role === 'branch' && branchId && /^[0-9a-fA-F]{24}$/.test(branchId)) {
-      rooms.push(`branch-${branchId}`);
-    }
-    if (role === 'chef' && chefId ) {
-      rooms.push(`chef-${chefId}`);
-    }
+    if (role === 'branch' && branchId) rooms.push(`branch-${branchId}`);
+    if (role === 'chef' && chefId) rooms.push(`chef-${chefId}`);
     if (role === 'production') rooms.push('production');
-    rooms.forEach(room => {
-      socket.join(room);
-      console.log(`[${new Date().toISOString()}] User ${socket.user.username} (${socket.user.id}) joined room: ${room}`);
-    });
+
+    rooms.forEach(room => socket.join(room));
     socket.emit('rooms', Array.from(socket.rooms));
   });
 
   socket.on('getRooms', () => {
-    console.log(`[${new Date().toISOString()}] Rooms for socket ${socket.id}:`, Array.from(socket.rooms));
     socket.emit('rooms', Array.from(socket.rooms));
   });
 
   setupNotifications(io, socket);
 
   socket.on('disconnect', (reason) => {
-    console.log(`[${new Date().toISOString()}] User disconnected: ${socket.id}, Reason: ${reason}`);
+    console.log(`[${new Date().toISOString()}] Socket disconnected: ${socket.id} → ${reason}`);
   });
 });
 
-connectDB().catch((err) => {
-  console.error(`[${new Date().toISOString()}] Failed to connect to MongoDB: ${err.message}`);
+// Database
+connectDB().catch(err => {
+  console.error(`[${new Date().toISOString()}] MongoDB connection failed:`, err.message);
   process.exit(1);
 });
 
-app.use('/socket.io', (req, res, next) => next());
-
+// Middlewares
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 500,
-  message: 'Too many requests from this IP, please try again after 15 minutes',
+  max: 800,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'طلبات كثيرة جدًا، حاول مرة أخرى بعد 15 دقيقة' },
 });
+
 app.use(limiter);
 if (compression) app.use(compression());
 app.use(morgan('combined'));
@@ -177,6 +187,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.set('io', io);
 
+// ✅ الحل النهائي: ضع CORS قبل كل routes (فعلناها فوق) — لا حاجة لتعديل routes
+
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboard', dashboardRoutes);
@@ -187,36 +200,48 @@ app.use('/api/chefs', chefRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/returns', returnRoutes);
 app.use('/api/inventory', inventoryRoutes);
-app.use('/api/factoryInventory', factoryRoutes); 
+app.use('/api/factoryInventory', factoryRoutes);
 app.use('/api/factoryOrders', factoryOrderRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/notifications', notificationsRoutes);
 
+// Health Check
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', environment: process.env.NODE_ENV || 'production', time: new Date().toISOString() });
+  res.status(200).json({
+    status: 'ok',
+    environment: process.env.NODE_ENV || 'production',
+    time: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
 });
 
-app.use((req, res) => {
-  console.warn(`[${new Date().toISOString()}] 404 Not Found: ${req.method} ${req.url}`);
+// 404 Handler
+app.use('*', (req, res) => {
+  console.warn(`[${new Date().toISOString()}] 404: ${req.method} ${req.originalUrl}`);
   res.status(404).json({ success: false, message: 'المسار غير موجود' });
 });
 
+// Global Error Handler
 app.use((err, req, res, next) => {
-  console.error(`[${new Date().toISOString()}] Error: ${err.message}, Stack: ${err.stack}`);
-  res.status(500).json({ success: false, message: 'خطأ في السيرفر', error: err.message });
+  console.error(`[${new Date().toISOString()}] Server Error:`, err.stack);
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'خطأ في السيرفر',
+  });
 });
 
+// Graceful Shutdown
 const PORT = process.env.PORT || 3000;
-server.setTimeout(120000); // Increase timeout to 120 seconds
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`[${new Date().toISOString()}] Server running on port ${PORT}`);
+  console.log(`[${new Date().toISOString()}] Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 process.on('SIGTERM', () => {
-  console.log(`[${new Date().toISOString()}] Received SIGTERM. Closing server gracefully.`);
+  console.log(`[${new Date().toISOString()}] SIGTERM received. Shutting down gracefully...`);
   server.close(() => {
     mongoose.connection.close(false, () => {
-      console.log(`[${new Date().toISOString()}] MongoDB connection closed.`);
+      console.log(`[${new Date().toISOString()}] MongoDB disconnected.`);
       process.exit(0);
     });
   });
