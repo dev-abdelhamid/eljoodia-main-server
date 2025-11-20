@@ -5,21 +5,15 @@ WORKDIR /app
 # تثبيت Caddy
 RUN apk add --no-cache caddy
 
-# نسخ package.json وتثبيت الديبندنسيز (production فقط)
+# نسخ package.json وتثبيت الديبندنسيز
 COPY package*.json ./
-RUN npm install --only=production
-# نسخ باقي الكود
+RUN npm ci --only=production
+
+# نسخ الكود كله
 COPY . .
 
-# البورتات المطلوبة
+# تعريض البورتات
 EXPOSE 80 443 3000
 
-# تشغيل Caddy + Node.js في الـ production
-CMD sh -c "\
-  if [ \"$NODE_ENV\" = \"production\" ]; then \
-    echo 'Production Mode → Caddy + HTTPS + SSL'; \
-    caddy run --config /app/Caddyfile --adapter caddyfile & node index.js; \
-  else \
-    echo 'Development Mode → Node.js only on :3000'; \
-    node index.js; \
-  fi"
+# تشغيل Caddy + Node.js
+CMD ["sh", "-c", "caddy run --config /app/Caddyfile --adapter caddyfile & node index.js"]

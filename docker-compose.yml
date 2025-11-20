@@ -9,10 +9,8 @@ services:
     env_file:
       - .env
     volumes:
-      - caddy_data:/data          # لحفظ شهادات SSL
-      - caddy_config:/config      # إعدادات Caddy
-      # مهم جدًا: ماتعملش mount للـ . في الـ production
-      # - .:/app          ← ممنوع تمامًا في الـ production
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   caddy_data:

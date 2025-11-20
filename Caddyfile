@@ -1,18 +1,24 @@
-# الدومين الرسمي – HTTPS تلقائي + شهادة SSL من Let's Encrypt
+# الدومين الرسمي مع HTTPS تلقائي
 aljodia.com, www.aljodia.com {
+    # كل الطلبات تروح للـ Node.js
     reverse_proxy localhost:3000
 
-    # Socket.io شغال 100%
-    handle_path /socket.io/* {
-        reverse_proxy localhost:3000
+    # Socket.io يشتغل بدون مشاكل
+    handle /socket.io/* {
+        reverse_proxy localhost:3000 {
+            header_up Host {host}
+            header_up Upgrade $http_upgrade
+            header_up Connection "Upgrade"
+        }
     }
 
-    # ملفات الصوت (لو موجودة)
-    file_server /sounds/* {
-        root /app/sounds
+    # ملفات الصوت
+    handle /sounds/* {
+        root * /app/sounds
+        file_server
     }
 
-    # هيدرز أمان قوية جدًا
+    # هيدرز أمان قوية
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options nosniff
@@ -24,7 +30,7 @@ aljodia.com, www.aljodia.com {
     encode gzip zstd
 }
 
-# لو الطلب جاي من غير دومين (يعني IP أو localhost)
+# أي طلب على IP مباشرة → نرجّعه للدومين الرسمي
 :80, :443 {
-    redir https://{host}{uri}
+    redir https://aljodia.com{uri} permanent
 }
