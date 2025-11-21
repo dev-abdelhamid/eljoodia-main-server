@@ -58,8 +58,16 @@ const generateRefreshToken = (user) => {
 router.post(
   '/login',
   [
+    options((req, res) => {
+    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.sendStatus(200);
+  }),
     check('username', 'اسم المستخدم مطلوب').not().isEmpty(),
     check('password', 'كلمة المرور مطلوبة').not().isEmpty(),
+    
+ 
+
   ],
   async (req, res) => {
     try {

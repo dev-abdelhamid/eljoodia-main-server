@@ -2,30 +2,29 @@ aljodia.com, www.aljodia.com {
     encode gzip
     tls admin@aljodia.com
 
-    # API
     handle /api/* {
         reverse_proxy localhost:3000
     }
-
-    # WebSockets (Socket.io)
     handle /socket.io/* {
         reverse_proxy localhost:3000
     }
 
-    # ملفات الصوت (من السيرفر)
     handle /sounds/* {
-        root * /sounds
+        root * /app/sounds
         file_server
     }
-
-    # ملفات الرفع (لو مستخدمها)
     handle /uploads/* {
-        root * /uploads
+        root * /app/uploads
         file_server
     }
 
-    # كل الباقي → الفرونت إند (React SPA)
+    # SPA Frontend - الحل الأبسط والمضمون
     root * /dist
-    try_files {path} {path}/ /index.html
+    @spa {
+        not path /api/* /socket.io/* /sounds/* /uploads/*
+        not file
+    }
+    rewrite @spa /index.html
+    try_files {path} /index.html
     file_server
 }
